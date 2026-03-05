@@ -1,11 +1,24 @@
 import os
-from dotenv import load_dotenv
+import sys
 
-load_dotenv()
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+print("🔍 DEBUG ENV:")
+print(f"SUPABASE_URL: {SUPABASE_URL}")
+print(f"SUPABASE_KEY length: {len(SUPABASE_KEY) if SUPABASE_KEY else 0}")
+print(f"SUPABASE_KEY starts with: {SUPABASE_KEY[:15] if SUPABASE_KEY else 'None'}")
+print(f"BOT_TOKEN exists: {'Yes' if BOT_TOKEN else 'No'}")
 
-if not BOT_TOKEN or not SUPABASE_URL or not SUPABASE_KEY:
-    raise ValueError("❌ Ошибка: проверь .env файл — все переменные должны быть заполнены!")
+if not SUPABASE_URL:
+    print("❌ SUPABASE_URL missing!")
+    sys.exit(1)
+if not SUPABASE_KEY:
+    print("❌ SUPABASE_KEY missing!")
+    sys.exit(1)
+if not BOT_TOKEN:
+    print("❌ BOT_TOKEN missing!")
+    sys.exit(1)
+
+print("✅ Все переменные загружены")
