@@ -3,10 +3,35 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from loguru import logger
+from supabase import create_client
 
-from database import get_all_zhk, get_zhk_by_name
+from config import SUPABASE_URL, SUPABASE_KEY
 import keyboards as kb
 from utils import safe_str, format_contacts, format_prezentaciya
+
+# ===== ПРЯМОЕ ПОДКЛЮЧЕНИЕ К SUPABASE =====
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+
+def get_all_zhk():
+    try:
+        response = supabase.table("uvedomleniya").select("zhk").execute()
+        return [row["zhk"] for row in response.data if row.get("zhk")]
+    except Exception as e:
+        logger.error(f"Ошибка получения списка ЖК: {e}")
+        return []
+
+
+def get_zhk_by_name(name: str):
+    try:
+        response = supabase.table("uvedomleniya").select("*").eq("zhk", name).execute()
+        return response.data[0] if response.data else None
+    except Exception as e:
+        logger.error(f"Ошибка получения данных ЖК '{name}': {e}")
+        return None
+
+
+# ==========================================
 
 router = Router()
 
