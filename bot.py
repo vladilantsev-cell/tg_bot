@@ -6,11 +6,10 @@ from config import BOT_TOKEN
 from handlers import router
 
 # Настройка логирования
-logger.add("bot.log", rotation="1 MB", retention="7 days", level="INFO")
+logger.add("bot.log", rotation="10 MB", retention="1 week", level="INFO")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
-
 dp.include_router(router)
 
 async def main():

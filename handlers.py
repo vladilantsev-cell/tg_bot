@@ -4,7 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from loguru import logger
 
-from database import db
+from database import get_all_zhk, get_zhk_by_name
 import keyboards as kb
 from utils import safe_str, format_contacts, format_prezentaciya
 
@@ -19,8 +19,7 @@ class FindZHk(StatesGroup):
 async def cmd_start(message: types.Message):
     logger.info(f"Пользователь {message.from_user.id} запустил бота")
     await message.answer(
-        "👋 Привет! Я бот для просмотра уведомлений по жилым комплексам.\n\n"
-        "Выберите действие:",
+        "👋 Привет! Я бот для просмотра уведомлений по жилым комплексам.",
         reply_markup=kb.get_main_menu_keyboard()
     )
 
@@ -44,7 +43,7 @@ async def handle_callbacks(callback: types.CallbackQuery, state: FSMContext):
             await state.set_state(FindZHk.waiting_for_name)
 
         elif data == "show_list":
-            zhk_list = await db.get_all_zhk()
+            zhk_list = get_all_zhk()
             if not zhk_list:
                 await callback.message.edit_text(
                     "😕 Пока нет доступных ЖК.",
@@ -65,7 +64,7 @@ async def handle_callbacks(callback: types.CallbackQuery, state: FSMContext):
 
         elif data.startswith("zhk|"):
             _, zhk_name = data.split("|", 1)
-            info = await db.get_zhk_by_name(zhk_name)
+            info = get_zhk_by_name(zhk_name)
 
             if not info:
                 await callback.message.edit_text(
@@ -91,7 +90,7 @@ async def handle_callbacks(callback: types.CallbackQuery, state: FSMContext):
 
         elif data.startswith("prez|"):
             _, zhk_name = data.split("|", 1)
-            info = await db.get_zhk_by_name(zhk_name)
+            info = get_zhk_by_name(zhk_name)
             if info and info.get("prezentaciya"):
                 await callback.message.answer(
                     format_prezentaciya(info['prezentaciya']),
@@ -102,7 +101,7 @@ async def handle_callbacks(callback: types.CallbackQuery, state: FSMContext):
                 await callback.message.answer("📭 Презентация не найдена.")
 
         elif data == "back_to_list":
-            zhk_list = await db.get_all_zhk()
+            zhk_list = get_all_zhk()
             await callback.message.edit_text(
                 "🏢 Выберите ЖК:",
                 reply_markup=kb.get_zhk_list_keyboard(zhk_list)
@@ -121,7 +120,7 @@ async def handle_callbacks(callback: types.CallbackQuery, state: FSMContext):
 @router.message(FindZHk.waiting_for_name)
 async def find_zhk_by_name(message: types.Message, state: FSMContext):
     zhk_name = message.text.strip()
-    info = await db.get_zhk_by_name(zhk_name)
+    info = get_zhk_by_name(zhk_name)
 
     if not info:
         await message.answer(
@@ -151,5 +150,4 @@ async def find_zhk_by_name(message: types.Message, state: FSMContext):
 
 @router.message()
 async def ignore_other_messages(message: types.Message):
-    """Игнорируем все остальные сообщения"""
     pass
