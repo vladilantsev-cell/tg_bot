@@ -1,4 +1,3 @@
-@router.callback_query()
 async def handle_callbacks(callback: types.CallbackQuery, state: FSMContext):
     data = callback.data
 
