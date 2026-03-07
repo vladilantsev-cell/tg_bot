@@ -1,37 +1,13 @@
+import httpx
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from loguru import logger
-from supabase import create_client
 
 from config import SUPABASE_URL, SUPABASE_KEY
 import keyboards as kb
 from utils import safe_str, format_contacts, format_prezentaciya
-
-# ===== ПРЯМОЕ ПОДКЛЮЧЕНИЕ К SUPABASE =====
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-
-def get_all_zhk():
-    try:
-        response = supabase.table("uvedomleniya").select("zhk").execute()
-        return [row["zhk"] for row in response.data if row.get("zhk")]
-    except Exception as e:
-        logger.error(f"Ошибка получения списка ЖК: {e}")
-        return []
-
-
-def get_zhk_by_name(name: str):
-    try:
-        response = supabase.table("uvedomleniya").select("*").eq("zhk", name).execute()
-        return response.data[0] if response.data else None
-    except Exception as e:
-        logger.error(f"Ошибка получения данных ЖК '{name}': {e}")
-        return None
-
-
-# ==========================================
 
 router = Router()
 
@@ -39,6 +15,50 @@ router = Router()
 class FindZHk(StatesGroup):
     waiting_for_name = State()
 
+
+# ===== ПРЯМЫЕ ЗАПРОСЫ К Supabase REST API =====
+async def fetch_zhk_list():
+    """Получает список всех ЖК через REST API"""
+    url = f"{SUPABASE_URL}/rest/v1/uvedomleniya"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}"
+    }
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            return [item["zhk"] for item in data if item.get("zhk")]
+        except Exception as e:
+            logger.error(f"Ошибка получения списка ЖК: {e}")
+            return []
+
+
+async def fetch_zhk_by_name(name: str):
+    """Получает данные конкретного ЖК по названию"""
+    url = f"{SUPABASE_URL}/rest/v1/uvedomleniya"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}"
+    }
+    params = {
+        "zhk": f"eq.{name}"
+    }
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(url, headers=headers, params=params)
+            response.raise_for_status()
+            data = response.json()
+            return data[0] if data else None
+        except Exception as e:
+            logger.error(f"Ошибка получения данных ЖК '{name}': {e}")
+            return None
+
+
+# ===============================================
 
 @router.message(Command("start"))
 async def cmd_start(message: types.Message):
@@ -68,7 +88,7 @@ async def handle_callbacks(callback: types.CallbackQuery, state: FSMContext):
             await state.set_state(FindZHk.waiting_for_name)
 
         elif data == "show_list":
-            zhk_list = get_all_zhk()
+            zhk_list = await fetch_zhk_list()
             if not zhk_list:
                 await callback.message.edit_text(
                     "😕 Пока нет доступных ЖК.",
@@ -89,7 +109,7 @@ async def handle_callbacks(callback: types.CallbackQuery, state: FSMContext):
 
         elif data.startswith("zhk|"):
             _, zhk_name = data.split("|", 1)
-            info = get_zhk_by_name(zhk_name)
+            info = await fetch_zhk_by_name(zhk_name)
 
             if not info:
                 await callback.message.edit_text(
@@ -115,7 +135,7 @@ async def handle_callbacks(callback: types.CallbackQuery, state: FSMContext):
 
         elif data.startswith("prez|"):
             _, zhk_name = data.split("|", 1)
-            info = get_zhk_by_name(zhk_name)
+            info = await fetch_zhk_by_name(zhk_name)
             if info and info.get("prezentaciya"):
                 await callback.message.answer(
                     format_prezentaciya(info['prezentaciya']),
@@ -126,7 +146,7 @@ async def handle_callbacks(callback: types.CallbackQuery, state: FSMContext):
                 await callback.message.answer("📭 Презентация не найдена.")
 
         elif data == "back_to_list":
-            zhk_list = get_all_zhk()
+            zhk_list = await fetch_zhk_list()
             await callback.message.edit_text(
                 "🏢 Выберите ЖК:",
                 reply_markup=kb.get_zhk_list_keyboard(zhk_list)
@@ -145,7 +165,7 @@ async def handle_callbacks(callback: types.CallbackQuery, state: FSMContext):
 @router.message(FindZHk.waiting_for_name)
 async def find_zhk_by_name(message: types.Message, state: FSMContext):
     zhk_name = message.text.strip()
-    info = get_zhk_by_name(zhk_name)
+    info = await fetch_zhk_by_name(zhk_name)
 
     if not info:
         await message.answer(
