@@ -1,4 +1,5 @@
 import httpx
+import random
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -14,11 +15,11 @@ router = Router()
 
 class FindZHk(StatesGroup):
     waiting_for_name = State()
+    waiting_for_builder = State()
 
 
 # ===== ПРЯМЫЕ ЗАПРОСЫ К Supabase REST API =====
 async def fetch_zhk_list():
-    """Получает список всех ЖК через REST API"""
     url = f"{SUPABASE_URL}/rest/v1/uvedomleniya"
     headers = {
         "apikey": SUPABASE_KEY,
@@ -37,7 +38,6 @@ async def fetch_zhk_list():
 
 
 async def fetch_zhk_by_name(name: str):
-    """Получает данные конкретного ЖК по названию"""
     url = f"{SUPABASE_URL}/rest/v1/uvedomleniya"
     headers = {
         "apikey": SUPABASE_KEY,
@@ -58,13 +58,67 @@ async def fetch_zhk_by_name(name: str):
             return None
 
 
+async def fetch_zhk_by_builder(builder: str):
+    url = f"{SUPABASE_URL}/rest/v1/uvedomleniya"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}"
+    }
+    params = {
+        "zastroyshchik": f"ilike.*{builder}*"
+    }
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(url, headers=headers, params=params)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Ошибка поиска по застройщику '{builder}': {e}")
+            return []
+
+
+async def get_stats():
+    url = f"{SUPABASE_URL}/rest/v1/uvedomleniya"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}"
+    }
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            total = len(data)
+            builders = len(set(item.get("zastroyshchik") for item in data if item.get("zastroyshchik")))
+            return total, builders
+        except Exception as e:
+            logger.error(f"Ошибка получения статистики: {e}")
+            return 0, 0
+
+
 # ===============================================
 
 @router.message(Command("start"))
 async def cmd_start(message: types.Message):
     logger.info(f"Пользователь {message.from_user.id} запустил бота")
+
+    # Приветственное сообщение
+    welcome_text = (
+        "🏢 <b>Добро пожаловать в бота по жилым комплексам!</b>\n\n"
+        "Здесь вы можете:\n"
+        "🔍 Найти ЖК по названию\n"
+        "🏢 Найти ЖК по застройщику\n"
+        "📋 Посмотреть список всех ЖК\n"
+        "🎲 Получить случайный ЖК\n"
+        "📊 Узнать статистику\n\n"
+        "Выберите действие:"
+    )
+
     await message.answer(
-        "👋 Привет! Я бот для просмотра уведомлений по жилым комплексам.",
+        welcome_text,
+        parse_mode="HTML",
         reply_markup=kb.get_main_menu_keyboard()
     )
 
@@ -80,30 +134,109 @@ async def handle_callbacks(callback: types.CallbackQuery, state: FSMContext):
     data = callback.data
 
     try:
+        # Главное меню
         if data == "find_by_name":
             await callback.message.edit_text(
-                "🔍 Введите название жилого комплекса:",
+                "🔍 <b>Поиск по названию</b>\n\nВведите название жилого комплекса:",
+                parse_mode="HTML",
                 reply_markup=kb.get_back_keyboard()
             )
             await state.set_state(FindZHk.waiting_for_name)
+
+        elif data == "find_by_builder":
+            await callback.message.edit_text(
+                "🏢 <b>Поиск по застройщику</b>\n\nВведите название застройщика:",
+                parse_mode="HTML",
+                reply_markup=kb.get_back_keyboard()
+            )
+            await state.set_state(FindZHk.waiting_for_builder)
 
         elif data == "show_list":
             zhk_list = await fetch_zhk_list()
             if not zhk_list:
                 await callback.message.edit_text(
-                    "😕 Пока нет доступных ЖК.",
+                    "😕 <b>Пока нет доступных ЖК.</b>",
+                    parse_mode="HTML",
                     reply_markup=kb.get_back_keyboard()
                 )
             else:
                 await callback.message.edit_text(
-                    "🏢 Выберите ЖК:",
-                    reply_markup=kb.get_zhk_list_keyboard(zhk_list)
+                    f"🏢 <b>Список ЖК</b> (всего: {len(zhk_list)})\n\nВыберите комплекс:",
+                    parse_mode="HTML",
+                    reply_markup=kb.get_zhk_list_keyboard(zhk_list, 0)
                 )
+
+        elif data.startswith("page|"):
+            page = int(data.split("|")[1])
+            zhk_list = await fetch_zhk_list()
+            await callback.message.edit_text(
+                f"🏢 <b>Список ЖК</b> (всего: {len(zhk_list)})",
+                parse_mode="HTML",
+                reply_markup=kb.get_zhk_list_keyboard(zhk_list, page)
+            )
+
+        elif data == "random_zhk":
+            zhk_list = await fetch_zhk_list()
+            if not zhk_list:
+                await callback.message.edit_text(
+                    "😕 <b>Пока нет доступных ЖК.</b>",
+                    parse_mode="HTML",
+                    reply_markup=kb.get_back_keyboard()
+                )
+            else:
+                random_zhk = random.choice(zhk_list)
+                info = await fetch_zhk_by_name(random_zhk)
+                if info:
+                    text = (
+                        f"🎲 <b>Случайный ЖК:</b>\n\n"
+                        f"🏢 <b>{safe_str(info.get('zhk'))}</b>\n"
+                        f"🏗 Застройщик: {safe_str(info.get('zastroyshchik'))}\n"
+                        f"📄 Уведомление: {safe_str(info.get('uvedomlenie'))}\n"
+                        f"💰 Вознаграждение: {safe_str(info.get('voznagrazhdenie'))}\n"
+                        f"👤 От кого: {safe_str(info.get('uvedomlenie_kogo'))}\n"
+                        f"🏦 Банк: {safe_str(info.get('bank'))}\n\n"
+                        f"📞 Контакты:\n{format_contacts(safe_str(info.get('kontakty')))}"
+                    )
+                    await callback.message.edit_text(
+                        text,
+                        parse_mode="HTML",
+                        disable_web_page_preview=True,
+                        reply_markup=kb.get_detail_keyboard(random_zhk)
+                    )
+                else:
+                    await callback.message.edit_text(
+                        "❌ <b>Ошибка загрузки данных</b>",
+                        parse_mode="HTML",
+                        reply_markup=kb.get_back_keyboard()
+                    )
+
+        elif data == "stats":
+            total, builders = await get_stats()
+            stats_text = (
+                f"📊 <b>Статистика базы ЖК</b>\n\n"
+                f"🏢 Всего ЖК: <b>{total}</b>\n"
+                f"🏗 Застройщиков: <b>{builders}</b>\n"
+                f"📅 Последнее обновление: <b>сегодня</b>"
+            )
+            await callback.message.edit_text(
+                stats_text,
+                parse_mode="HTML",
+                reply_markup=kb.get_back_keyboard()
+            )
+
+        elif data == "feedback":
+            await callback.message.edit_text(
+                "📧 <b>Обратная связь</b>\n\n"
+                "По всем вопросам обращайтесь к разработчику:",
+                parse_mode="HTML",
+                reply_markup=kb.get_feedback_keyboard()
+            )
 
         elif data == "back_to_main":
             await state.clear()
             await callback.message.edit_text(
-                "👋 Главное меню:",
+                "🏠 <b>Главное меню</b>\n\nВыберите действие:",
+                parse_mode="HTML",
                 reply_markup=kb.get_main_menu_keyboard()
             )
 
@@ -113,7 +246,8 @@ async def handle_callbacks(callback: types.CallbackQuery, state: FSMContext):
 
             if not info:
                 await callback.message.edit_text(
-                    "❌ ЖК не найден.",
+                    "❌ <b>ЖК не найден.</b>",
+                    parse_mode="HTML",
                     reply_markup=kb.get_back_keyboard()
                 )
             else:
@@ -133,6 +267,29 @@ async def handle_callbacks(callback: types.CallbackQuery, state: FSMContext):
                     reply_markup=kb.get_detail_keyboard(zhk_name)
                 )
 
+        elif data.startswith("contacts|"):
+            _, zhk_name = data.split("|", 1)
+            info = await fetch_zhk_by_name(zhk_name)
+            if info and info.get("kontakty"):
+                contacts = format_contacts(info['kontakty'])
+                await callback.message.answer(
+                    f"📞 <b>Контакты для {safe_str(info.get('zhk'))}:</b>\n\n{contacts}",
+                    parse_mode="HTML"
+                )
+            else:
+                await callback.message.answer("📭 Контакты не найдены.")
+
+        elif data.startswith("bank|"):
+            _, zhk_name = data.split("|", 1)
+            info = await fetch_zhk_by_name(zhk_name)
+            if info and info.get("bank"):
+                await callback.message.answer(
+                    f"🏦 <b>Банк для {safe_str(info.get('zhk'))}:</b>\n\n{info['bank']}",
+                    parse_mode="HTML"
+                )
+            else:
+                await callback.message.answer("🏦 Информация о банке не найдена.")
+
         elif data.startswith("prez|"):
             _, zhk_name = data.split("|", 1)
             info = await fetch_zhk_by_name(zhk_name)
@@ -148,8 +305,9 @@ async def handle_callbacks(callback: types.CallbackQuery, state: FSMContext):
         elif data == "back_to_list":
             zhk_list = await fetch_zhk_list()
             await callback.message.edit_text(
-                "🏢 Выберите ЖК:",
-                reply_markup=kb.get_zhk_list_keyboard(zhk_list)
+                f"🏢 <b>Список ЖК</b> (всего: {len(zhk_list)})",
+                parse_mode="HTML",
+                reply_markup=kb.get_zhk_list_keyboard(zhk_list, 0)
             )
 
         else:
@@ -169,7 +327,8 @@ async def find_zhk_by_name(message: types.Message, state: FSMContext):
 
     if not info:
         await message.answer(
-            "❌ ЖК с таким названием не найден. Попробуйте ещё раз:",
+            "❌ <b>ЖК с таким названием не найден.</b>\nПопробуйте ещё раз:",
+            parse_mode="HTML",
             reply_markup=kb.get_back_keyboard()
         )
         return
@@ -189,6 +348,36 @@ async def find_zhk_by_name(message: types.Message, state: FSMContext):
         parse_mode="HTML",
         disable_web_page_preview=True,
         reply_markup=kb.get_detail_keyboard(zhk_name)
+    )
+    await state.clear()
+
+
+@router.message(FindZHk.waiting_for_builder)
+async def find_zhk_by_builder(message: types.Message, state: FSMContext):
+    builder_name = message.text.strip()
+    results = await fetch_zhk_by_builder(builder_name)
+
+    if not results:
+        await message.answer(
+            "❌ <b>ЖК с таким застройщиком не найдены.</b>\nПопробуйте ещё раз:",
+            parse_mode="HTML",
+            reply_markup=kb.get_back_keyboard()
+        )
+        return
+
+    text = f"🏢 <b>Найдено ЖК по застройщику '{builder_name}':</b>\n\n"
+    for item in results[:5]:  # Показываем первые 5
+        text += f"• {item.get('zhk')}\n"
+
+    if len(results) > 5:
+        text += f"\n...и ещё {len(results) - 5}"
+
+    text += "\n\nЧтобы посмотреть детали, найдите ЖК по названию."
+
+    await message.answer(
+        text,
+        parse_mode="HTML",
+        reply_markup=kb.get_back_keyboard()
     )
     await state.clear()
 
