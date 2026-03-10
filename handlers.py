@@ -1,5 +1,4 @@
 import httpx
-import random
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -104,14 +103,14 @@ async def get_stats():
 async def cmd_start(message: types.Message):
     logger.info(f"Пользователь {message.from_user.id} запустил бота")
 
-    # Приветственное сообщение
     welcome_text = (
         "🏢 <b>Добро пожаловать в бота по жилым комплексам!</b>\n\n"
         "Здесь вы можете:\n"
         "🔍 Найти ЖК по названию\n"
         "🏢 Найти ЖК по застройщику\n"
         "📋 Посмотреть список всех ЖК\n"
-        "📊 Узнать статистику\n\n"
+        "📊 Узнать статистику\n"
+        "📧 Связаться с разработчиком\n\n"
         "Выберите действие:"
     )
 
@@ -133,7 +132,6 @@ async def handle_callbacks(callback: types.CallbackQuery, state: FSMContext):
     data = callback.data
 
     try:
-        # Главное меню
         if data == "find_by_name":
             await callback.message.edit_text(
                 "🔍 <b>Поиск по названию</b>\n\nВведите название жилого комплекса:",
@@ -173,41 +171,6 @@ async def handle_callbacks(callback: types.CallbackQuery, state: FSMContext):
                 parse_mode="HTML",
                 reply_markup=kb.get_zhk_list_keyboard(zhk_list, page)
             )
-
-        elif data == "random_zhk":
-            zhk_list = await fetch_zhk_list()
-            if not zhk_list:
-                await callback.message.edit_text(
-                    "😕 <b>Пока нет доступных ЖК.</b>",
-                    parse_mode="HTML",
-                    reply_markup=kb.get_back_keyboard()
-                )
-            else:
-                random_zhk = random.choice(zhk_list)
-                info = await fetch_zhk_by_name(random_zhk)
-                if info:
-                    text = (
-                        f"🎲 <b>Случайный ЖК:</b>\n\n"
-                        f"🏢 <b>{safe_str(info.get('zhk'))}</b>\n"
-                        f"🏗 Застройщик: {safe_str(info.get('zastroyshchik'))}\n"
-                        f"📄 Уведомление: {safe_str(info.get('uvedomlenie'))}\n"
-                        f"💰 Вознаграждение: {safe_str(info.get('voznagrazhdenie'))}\n"
-                        f"👤 От кого: {safe_str(info.get('uvedomlenie_kogo'))}\n"
-                        f"🏦 Банк: {safe_str(info.get('bank'))}\n\n"
-                        f"📞 Контакты:\n{format_contacts(safe_str(info.get('kontakty')))}"
-                    )
-                    await callback.message.edit_text(
-                        text,
-                        parse_mode="HTML",
-                        disable_web_page_preview=True,
-                        reply_markup=kb.get_detail_keyboard(random_zhk)
-                    )
-                else:
-                    await callback.message.edit_text(
-                        "❌ <b>Ошибка загрузки данных</b>",
-                        parse_mode="HTML",
-                        reply_markup=kb.get_back_keyboard()
-                    )
 
         elif data == "stats":
             total, builders = await get_stats()
@@ -365,7 +328,7 @@ async def find_zhk_by_builder(message: types.Message, state: FSMContext):
         return
 
     text = f"🏢 <b>Найдено ЖК по застройщику '{builder_name}':</b>\n\n"
-    for item in results[:5]:  # Показываем первые 5
+    for item in results[:5]:
         text += f"• {item.get('zhk')}\n"
 
     if len(results) > 5:
@@ -381,6 +344,36 @@ async def find_zhk_by_builder(message: types.Message, state: FSMContext):
     await state.clear()
 
 
+# ===== НОВЫЙ ОБРАБОТЧИК НЕИЗВЕСТНЫХ СООБЩЕНИЙ =====
 @router.message()
-async def ignore_other_messages(message: types.Message):
-    pass
+async def handle_unknown(message: types.Message):
+    """
+    Обрабатывает все неизвестные команды и сообщения
+    """
+    # Проверяем, не находится ли пользователь в режиме поиска
+    state = FSMContext(
+        storage=router.message.storage,
+        key=(message.chat.id, message.chat.id)
+    )
+    current_state = await state.get_state()
+
+    if current_state in [FindZHk.waiting_for_name.state, FindZHk.waiting_for_builder.state]:
+        # Если пользователь в режиме поиска - игнорируем (обработчики выше уже сработали)
+        return
+
+    # Если это неизвестная команда (начинается с /)
+    if message.text and message.text.startswith('/'):
+        await message.answer(
+            "❌ <b>Неизвестная команда</b>\n\n"
+            "Воспользуйтесь кнопками в меню или введите /start",
+            parse_mode="HTML"
+        )
+        return
+
+    # Если пользователь просто написал что-то непонятное
+    await message.answer(
+        "🤷‍♂️ <b>Я вас не понимаю</b>\n\n"
+        "Пожалуйста, используйте кнопки в меню или введите /start",
+        parse_mode="HTML",
+        reply_markup=kb.get_back_keyboard()
+    )
