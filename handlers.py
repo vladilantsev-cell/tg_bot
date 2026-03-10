@@ -1,13 +1,15 @@
 import httpx
+import aiohttp
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import BufferedInputFile
 from loguru import logger
 
 from config import SUPABASE_URL, SUPABASE_KEY
 import keyboards as kb
-from utils import safe_str, format_contacts, format_prezentaciya
+from utils import safe_str, format_contacts
 
 router = Router()
 
@@ -95,6 +97,29 @@ async def get_stats():
         except Exception as e:
             logger.error(f"Ошибка получения статистики: {e}")
             return 0, 0
+
+
+# ===== ФУНКЦИЯ ДЛЯ ОТПРАВКИ ФОТО =====
+async def send_presentation_as_photo(message_or_callback, zhk_name: str, image_url: str):
+    """
+    Скачивает изображение по URL и отправляет как фото в чат
+    """
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(image_url) as response:
+                if response.status == 200:
+                    image_data = await response.read()
+
+                    await message_or_callback.answer_photo(
+                        photo=BufferedInputFile(image_data, filename=f"{zhk_name}.jpg"),
+                        caption=f"📊 <b>Презентация: {zhk_name}</b>",
+                        parse_mode="HTML"
+                    )
+                else:
+                    await message_or_callback.answer("❌ Не удалось загрузить изображение")
+    except Exception as e:
+        logger.error(f"Ошибка при отправке презентации: {e}")
+        await message_or_callback.answer("❌ Ошибка при загрузке изображения")
 
 
 # ===============================================
@@ -256,11 +281,8 @@ async def handle_callbacks(callback: types.CallbackQuery, state: FSMContext):
             _, zhk_name = data.split("|", 1)
             info = await fetch_zhk_by_name(zhk_name)
             if info and info.get("prezentaciya"):
-                await callback.message.answer(
-                    format_prezentaciya(info['prezentaciya']),
-                    parse_mode="HTML",
-                    disable_web_page_preview=True
-                )
+                # Отправляем фото прямо в чат
+                await send_presentation_as_photo(callback.message, zhk_name, info['prezentaciya'])
             else:
                 await callback.message.answer("📭 Презентация не найдена.")
 
@@ -344,7 +366,7 @@ async def find_zhk_by_builder(message: types.Message, state: FSMContext):
     await state.clear()
 
 
-# ===== НОВЫЙ ОБРАБОТЧИК НЕИЗВЕСТНЫХ СООБЩЕНИЙ =====
+# ===== ОБРАБОТЧИК НЕИЗВЕСТНЫХ СООБЩЕНИЙ =====
 @router.message()
 async def handle_unknown(message: types.Message):
     """
@@ -358,10 +380,8 @@ async def handle_unknown(message: types.Message):
     current_state = await state.get_state()
 
     if current_state in [FindZHk.waiting_for_name.state, FindZHk.waiting_for_builder.state]:
-        # Если пользователь в режиме поиска - игнорируем (обработчики выше уже сработали)
         return
 
-    # Если это неизвестная команда (начинается с /)
     if message.text and message.text.startswith('/'):
         await message.answer(
             "❌ <b>Неизвестная команда</b>\n\n"
@@ -370,7 +390,6 @@ async def handle_unknown(message: types.Message):
         )
         return
 
-    # Если пользователь просто написал что-то непонятное
     await message.answer(
         "🤷‍♂️ <b>Я вас не понимаю</b>\n\n"
         "Пожалуйста, используйте кнопки в меню или введите /start",
